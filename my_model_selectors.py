@@ -110,19 +110,34 @@ class SelectorDIC(ModelSelector):
         # TODO implement model selection based on DIC scores
         # raise NotImplementedError
         DIC_scores = []
-        log_Xs = []
+        results = []
+        antiRes = []
         try:
-            M = len(self.n_components)
             for n_component in self.n_components:
+                # fit model on train
                 model = self.base_model(n_component)
-                log_Xs.append(model.score(self.X, self.lengths))
-
-            log_sum = sum(log_Xs)
-            for log_X in log_Xs:
-                DIC = log_X - (log_sum - log_X)*1./(M-1)
+                # score on train
+                logL = model.score(self.X, self.lengths)
+                # score on everything else
+                antiLogL = 0.0
+                word_count = 0
+                for word in self.hwords:
+                    if word == self.this_word:
+                        continue
+                    X, lengths = self.hwords[word]
+                    antiLogL += model.score(X, lengths)
+                    word_count += 1
+                # normalize
+                antiLogL = antiLogL/float(word_count)
+                # calculate DIC and save result
+                DIC = logL - antiLogL
                 DIC_scores.append(DIC)
+                results.append(logL)
+                antiRes.append(antiLogL)
+
         except Exception as e:
             pass
+            # print('!')
 
         best_component = self.n_components[np.argmax(DIC_scores)] if DIC_scores else self.n_constant
         return self.base_model(best_component)
