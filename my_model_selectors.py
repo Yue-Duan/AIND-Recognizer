@@ -90,7 +90,7 @@ class SelectorBIC(ModelSelector):
         except Exception as e:
             pass
 
-        best_component = self.n_components[np.argmax(BIC_scores)] if BIC_scores else self.n_constant
+        best_component = self.n_components[np.argmin(BIC_scores)] if BIC_scores else self.n_constant
         return self.base_model(best_component)
 
 
@@ -119,16 +119,19 @@ class SelectorDIC(ModelSelector):
                 # score on train
                 logL = model.score(self.X, self.lengths)
                 # score on everything else
-                antiLogL = 0.0
-                word_count = 0
-                for word in self.hwords:
-                    if word == self.this_word:
-                        continue
-                    X, lengths = self.hwords[word]
-                    antiLogL += model.score(X, lengths)
-                    word_count += 1
-                # normalize
-                antiLogL = antiLogL/float(word_count)
+                # modified as suggested
+                antiLogL = np.mean( [ model.score(*self.hwords[word]) for word in self.words if word != self.this_word ] )
+                # antiLogL = 0.0
+                # word_count = 0
+                # for word in self.hwords:
+                #     if word == self.this_word:
+                #         continue
+                #     X, lengths = self.hwords[word]
+                #     antiLogL += model.score(X, lengths)
+                #     word_count += 1
+                # # normalize
+                # antiLogL = antiLogL/float(word_count)
+
                 # calculate DIC and save result
                 DIC = logL - antiLogL
                 DIC_scores.append(DIC)
@@ -155,22 +158,36 @@ class SelectorCV(ModelSelector):
         # raise NotImplementedError
         # list to save different fold scores
         fold_mean_scores = []
-        # k-fold split
-        split_method = KFold()
-        try:
-            for n_component in self.n_components:
-                model = self.base_model(n_component)
-                # calculate model mean scores
+
+
+        for n_component in self.n_components:
+            # print(n_component)
+            if len(self.sequences) < 2:
+                # for words with not long enough sequences, train and score on all data
+                # print('only 1 sample')
+                try:
+                    model = self.base_model(n_component)
+                    model_score = model.score(self.X, self.lengths)
+                except Exception as e:
+                    model_score = float("-inf")
+                fold_mean_scores.append(model_score)
+            else:
                 fold_score_list = []
-                for _, test_idx in split_method.split(self.sequences):
-                    # get test sequences
-                    test_X, test_length = combine_sequences(test_idx, self.sequences)
-                    # save model score to list
-                    fold_score_list.append(model.score(test_X, test_length))
+                # split to 3 folds if possible
+                # k-fold split
+                split_method = KFold(n_splits=min(len(self.sequences), 3))
+                for train_idx, test_idx in split_method.split(self.sequences):
+                    train_X, train_lengths = combine_sequences(train_idx, self.sequences)
+                    test_X, test_lengths = combine_sequences(test_idx, self.sequences)
+                    try:
+                        # train model using training data only
+                        cv_model = GaussianHMM(n_component, covariance_type="diag", n_iter=1000, random_state=self.random_state, verbose=False).fit(train_X, train_lengths)
+                        # calculate test score for this fold
+                        fold_score_list.append(cv_model.score(test_X, test_lengths))
+                    except Exception as e:
+                        pass
                 # Compute mean of all fold scores
                 fold_mean_scores.append(np.mean(fold_score_list))
-        except Exception as e:
-            pass
 
         best_component = self.n_components[np.argmax(fold_mean_scores)] if fold_mean_scores else self.n_constant
-        return self.base_model(best_component)
+        return self.base_model(best_component) #, fold_mean_scores # for sanity check
